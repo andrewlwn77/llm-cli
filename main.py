@@ -7,6 +7,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import subprocess
 import readline
+import glob
 
 MODEL_NAME = "microsoft/phi-1"  # Updated model name
 
@@ -120,6 +121,27 @@ def get_custom_prompt():
     current_dir = os.getcwd().replace(os.path.expanduser('~'), '~')
     return f"(llm-mode) {username}@{hostname}:{current_dir}$ "
 
+class Completer:
+    def __init__(self):
+        self.matches = []
+
+    def complete(self, text, state):
+        if state == 0:
+            line = readline.get_line_buffer()
+            parts = line.split()
+            
+            if not parts or line[-1] == ' ':
+                # Complete commands
+                self.matches = glob.glob(text + '*')
+            elif len(parts) == 1 and parts[0] == 'cd':
+                # Complete directories for cd command
+                self.matches = [d for d in glob.glob(text + '*') if os.path.isdir(d)]
+            else:
+                # Complete filenames
+                self.matches = glob.glob(text + '*')
+        
+        return self.matches[state] if state < len(self.matches) else None
+
 def main():
     model, tokenizer = load_llm_model(MODEL_NAME)
     if model is None or tokenizer is None:
@@ -137,43 +159,50 @@ def main():
     histfile = os.path.join(os.path.expanduser("~"), ".llm_cli_history")
     try:
         readline.read_history_file(histfile)
-        # default history len is -1 (infinite), which may grow unruly
-        readline.set_history_length(1000)
     except FileNotFoundError:
         pass
+    
+    readline.set_history_length(1000)
+    
+    # Set up tab completion
+    completer = Completer()
+    readline.set_completer_delims(' \t\n;')
+    readline.parse_and_bind("tab: complete")
+    readline.set_completer(completer.complete)
     
     while True:
         try:
             user_input = input(get_custom_prompt())
             readline.write_history_file(histfile)
+            
+            if user_input.lower() == 'exit':
+                break
+            
+            if is_question(user_input):
+                # Generate response using LLM
+                response = generate_response(user_input, model, tokenizer, scripting_env)
+                print(f"Suggested command: {response}")
+                execute = input("Do you want to execute this command? (y/n): ")
+                if execute.lower() == 'y':
+                    user_input = response
+                else:
+                    continue
+            
+            # Execute the command
+            try:
+                result = subprocess.run(user_input, shell=True, check=True, text=True, capture_output=True)
+                print(result.stdout)
+            except subprocess.CalledProcessError as e:
+                print(f"Error executing command: {e}")
+                print(e.stderr)
+            
+            # Store the command in the database
+            insert_command(conn, (user_input, "", "", scripting_env))
+
         except EOFError:
             break
-        
-        if user_input.lower() == 'exit':
-            break
-        
-        if is_question(user_input):
-            # Generate response using LLM
-            response = generate_response(user_input, model, tokenizer, scripting_env)
-            print(f"Suggested command: {response}")
-            execute = input("Do you want to execute this command? (y/n): ")
-            if execute.lower() == 'y':
-                user_input = response
-            else:
-                continue
-        
-        # Execute the command
-        try:
-            result = subprocess.run(user_input, shell=True, check=True, text=True, capture_output=True)
-            print(result.stdout)
-        except subprocess.CalledProcessError as e:
-            print(f"Error executing command: {e}")
-            print(e.stderr)
-        
-        # Store the command in the database
-        insert_command(conn, (user_input, "", "", scripting_env))
-    
+
     conn.close()
-    
+
 if __name__ == "__main__":
     main()
