@@ -131,21 +131,33 @@ class Completer:
             line = readline.get_line_buffer()
             parts = shlex.split(line)
             
-            if not parts or line[-1] == ' ':
-                self.matches = self.get_command_completions(text)
-            elif parts[0] == 'git':
+            if parts and parts[0] == 'git':
                 self.matches = self.get_git_completions(line, text)
-            elif len(parts) == 1 and parts[0] == 'cd':
-                self.matches = [d for d in os.listdir('.') if d.startswith(text) and os.path.isdir(d)]
             else:
-                self.matches = [f for f in os.listdir('.') if f.startswith(text)]
+                self.matches = self.get_bash_completions(line, text)
         
         return self.matches[state] if state < len(self.matches) else None
 
-    def get_command_completions(self, text):
+    def get_bash_completions(self, line, text):
         try:
-            return [cmd for cmd in os.listdir('/usr/bin') if cmd.startswith(text)]
-        except:
+            completions = subprocess.check_output(
+                f"""
+                bash -c '
+                    source /usr/share/bash-completion/bash_completion 2>/dev/null
+                    source /etc/bash_completion 2>/dev/null
+                    COMP_WORDS=({line})
+                    COMP_CWORD=${{#COMP_WORDS[@]}}
+                    COMP_CWORD=$(($COMP_CWORD - 1))
+                    COMP_LINE="{line}"
+                    COMP_POINT=${{#COMP_LINE}}
+                    $(complete -p ${{COMP_WORDS[0]}} 2>/dev/null | sed "s/.*-F \\([^ ]*\\) .*/\\1/") 2>/dev/null
+                    printf "%s\\n" "${{COMPREPLY[@]}}"
+                '
+                """,
+                shell=True, text=True, stderr=subprocess.DEVNULL
+            ).splitlines()
+            return [c for c in completions if c.startswith(text)]
+        except subprocess.CalledProcessError:
             return []
 
     def get_git_completions(self, line, text):
