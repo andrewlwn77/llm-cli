@@ -5,6 +5,8 @@ import requests
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
+import subprocess
+import readline
 
 MODEL_NAME = "microsoft/phi-1"  # Updated model name
 
@@ -112,6 +114,12 @@ def is_question(input_text):
     ]
     return any(re.search(pattern, input_text, re.IGNORECASE) for pattern in question_patterns)
 
+def get_custom_prompt():
+    username = os.getenv('USER') or os.getenv('USERNAME') or 'user'
+    hostname = os.uname().nodename
+    current_dir = os.getcwd().replace(os.path.expanduser('~'), '~')
+    return f"(llm-mode) {username}@{hostname}:{current_dir}$ "
+
 def main():
     model, tokenizer = load_llm_model(MODEL_NAME)
     if model is None or tokenizer is None:
@@ -125,8 +133,21 @@ def main():
     scripting_env = detect_scripting_environment()
     print(f"Detected scripting environment: {scripting_env}")
     
+    # Set up readline for command history
+    histfile = os.path.join(os.path.expanduser("~"), ".llm_cli_history")
+    try:
+        readline.read_history_file(histfile)
+        # default history len is -1 (infinite), which may grow unruly
+        readline.set_history_length(1000)
+    except FileNotFoundError:
+        pass
+    
     while True:
-        user_input = input("Enter your command or question (or 'exit' to quit): ")
+        try:
+            user_input = input(get_custom_prompt())
+            readline.write_history_file(histfile)
+        except EOFError:
+            break
         
         if user_input.lower() == 'exit':
             break
@@ -134,21 +155,23 @@ def main():
         if is_question(user_input):
             # Generate response using LLM
             response = generate_response(user_input, model, tokenizer, scripting_env)
-            print(f"LLM Response: {response}")
-        else:
-            # Check if command exists in database
-            command_info = check_command(user_input, conn)
-            
-            if command_info:
-                print(f"Command information from database: {command_info}")
+            print(f"Suggested command: {response}")
+            execute = input("Do you want to execute this command? (y/n): ")
+            if execute.lower() == 'y':
+                user_input = response
             else:
-                # Gather information about the command
-                command_info = gather_command_info(user_input)
-                print(f"Command information: {command_info}")
-                
-                # Store the information in the database
-                insert_command(conn, (user_input, command_info, "", scripting_env))
-                print("Command information stored in the database.")
+                continue
+        
+        # Execute the command
+        try:
+            result = subprocess.run(user_input, shell=True, check=True, text=True, capture_output=True)
+            print(result.stdout)
+        except subprocess.CalledProcessError as e:
+            print(f"Error executing command: {e}")
+            print(e.stderr)
+        
+        # Store the command in the database
+        insert_command(conn, (user_input, "", "", scripting_env))
     
     conn.close()
     
