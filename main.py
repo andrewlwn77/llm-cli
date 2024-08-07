@@ -4,8 +4,9 @@ import sqlite3
 import requests
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
 
-MODEL_NAME = "microsoft/phi-2"  # or any other model from the list above
+MODEL_NAME = "microsoft/phi-1"  # Updated model name
 
 def download_model(url, filename):
     response = requests.get(url, stream=True)
@@ -27,33 +28,33 @@ def load_llm_model(model_name):
     print("Loading the model...")
     try:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(model_name)
+        model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float32, low_cpu_mem_usage=True)
         print("Model loaded successfully.")
         return model, tokenizer
     except Exception as e:
-        print(f"Error loading the model: {e}")
+        print(f"Error loading the model: {str(e)}")
         print(f"Error type: {type(e).__name__}")
         print(f"Error details: {str(e)}")
         print("Traceback:")
         import traceback
         traceback.print_exc()
         print("Please ensure that the model is available and that transformers is correctly installed.")
-        exit(1)
+        return None, None
 
 def generate_response(prompt: str, model, tokenizer, scripting_env):
     try:
-        full_prompt = f"""Instruction: Provide a concise and accurate answer to the following question about using the command line in a {scripting_env} environment.
+        full_prompt = f"""Instruction: You are a command line assistant for a {scripting_env} environment. Provide ONLY the exact command to accomplish the following task. Do not include any explanations, examples, or output.
 
-Question: {prompt}
+Task: {prompt}
 
-Answer: """
+Command:"""
         inputs = tokenizer(full_prompt, return_tensors="pt", truncation=True, max_length=512)
-        outputs = model.generate(**inputs, max_new_tokens=150, num_return_sequences=1, temperature=0.7, top_p=0.95, do_sample=True)
+        outputs = model.generate(**inputs, max_new_tokens=30, num_return_sequences=1, temperature=0.1, top_p=0.95, do_sample=True)
         response = tokenizer.decode(outputs[0], skip_special_tokens=True)
         
-        # Extract only the answer part
-        answer = response.split("Answer:")[-1].strip()
-        return answer
+        # Extract only the command part and remove any newlines
+        command = response.split("Command:")[-1].strip().split('\n')[0]
+        return command
     except Exception as e:
         print(f"Error generating response: {e}")
         return "Sorry, I couldn't generate a response. Please try again."
@@ -105,15 +106,18 @@ def detect_scripting_environment():
         return 'unknown'
 
 def is_question(input_text):
-    question_patterns = ["how do I", "what does", "explain"]
-    for pattern in question_patterns:
-        if re.search(pattern, input_text, re.IGNORECASE):
-            return True
-    return False
+    question_patterns = [
+        r'\bhow\b', r'\bwhat\b', r'\bwhy\b', r'\bwhen\b', r'\bwhere\b', 
+        r'\bcan\b.*\?', r'\bcould\b.*\?', r'\bshould\b.*\?', r'\bwould\b.*\?'
+    ]
+    return any(re.search(pattern, input_text, re.IGNORECASE) for pattern in question_patterns)
 
 def main():
     model, tokenizer = load_llm_model(MODEL_NAME)
-    
+    if model is None or tokenizer is None:
+        print("Failed to load the model. Exiting.")
+        return
+
     db_file = "cli_commands.db"
     conn = create_connection(db_file)
     create_table(conn)

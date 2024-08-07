@@ -1,4 +1,5 @@
 requests
 tqdm
 transformers
+bitsandbytes
 accelerate
