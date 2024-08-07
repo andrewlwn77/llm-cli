@@ -8,6 +8,7 @@ import torch
 import subprocess
 import readline
 import glob
+import shlex
 
 MODEL_NAME = "microsoft/phi-1"  # Updated model name
 
@@ -128,19 +129,57 @@ class Completer:
     def complete(self, text, state):
         if state == 0:
             line = readline.get_line_buffer()
-            parts = line.split()
+            parts = shlex.split(line)
             
             if not parts or line[-1] == ' ':
-                # Complete commands
-                self.matches = glob.glob(text + '*')
+                self.matches = self.get_command_completions(text)
+            elif parts[0] == 'git':
+                self.matches = self.get_git_completions(line, text)
             elif len(parts) == 1 and parts[0] == 'cd':
-                # Complete directories for cd command
-                self.matches = [d for d in glob.glob(text + '*') if os.path.isdir(d)]
+                self.matches = [d for d in os.listdir('.') if d.startswith(text) and os.path.isdir(d)]
             else:
-                # Complete filenames
-                self.matches = glob.glob(text + '*')
+                self.matches = [f for f in os.listdir('.') if f.startswith(text)]
         
         return self.matches[state] if state < len(self.matches) else None
+
+    def get_command_completions(self, text):
+        try:
+            return [cmd for cmd in os.listdir('/usr/bin') if cmd.startswith(text)]
+        except:
+            return []
+
+    def get_git_completions(self, line, text):
+        try:
+            words = shlex.split(line)
+            if len(words) >= 2:
+                subcommand = words[1]
+                completions = subprocess.check_output(
+                    f"""
+                    bash -c '
+                        source /usr/share/bash-completion/completions/git 2>/dev/null
+                        __git_main 2>/dev/null
+                        __git_{subcommand} 2>/dev/null || __gitcomp_nl "$(git --list-cmds=main,others,alias,nohelpers)" 2>/dev/null
+                        printf "%s\\n" "${{COMPREPLY[@]}}"
+                    '
+                    """,
+                    shell=True, text=True, stderr=subprocess.DEVNULL
+                ).splitlines()
+            else:
+                completions = subprocess.check_output(
+                    f"""
+                    bash -c '
+                        source /usr/share/bash-completion/completions/git 2>/dev/null
+                        __git_main 2>/dev/null
+                        __gitcomp_nl "$(git --list-cmds=main,others,alias,nohelpers)" 2>/dev/null
+                        printf "%s\\n" "${{COMPREPLY[@]}}"
+                    '
+                    """,
+                    shell=True, text=True, stderr=subprocess.DEVNULL
+                ).splitlines()
+            
+            return [c for c in completions if c.startswith(text)]
+        except subprocess.CalledProcessError:
+            return []
 
 def main():
     model, tokenizer = load_llm_model(MODEL_NAME)
