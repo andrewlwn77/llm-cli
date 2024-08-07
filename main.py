@@ -3,10 +3,9 @@ import re
 import sqlite3
 import requests
 from tqdm import tqdm
-from llama_cpp import Llama
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-MODEL_URL = "https://huggingface.co/bartowski/Phi-3.1-mini-4k-instruct-GGUF/resolve/main/Phi-3.1-mini-4k-instruct-IQ2_M.gguf"
-MODEL_PATH = "Phi-3.1-mini-4k-instruct-IQ2_M.gguf"
+MODEL_NAME = "microsoft/phi-2"  # or any other model from the list above
 
 def download_model(url, filename):
     response = requests.get(url, stream=True)
@@ -24,19 +23,40 @@ def download_model(url, filename):
             size = file.write(data)
             progress_bar.update(size)
 
-def load_llm_model(model_path):
-    if not os.path.exists(model_path):
-        print(f"Downloading model from {MODEL_URL}")
-        download_model(MODEL_URL, model_path)
-    
+def load_llm_model(model_name):
     print("Loading the model...")
-    model = Llama(model_path=model_path)
-    print("Model loaded successfully.")
-    return model
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForCausalLM.from_pretrained(model_name)
+        print("Model loaded successfully.")
+        return model, tokenizer
+    except Exception as e:
+        print(f"Error loading the model: {e}")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error details: {str(e)}")
+        print("Traceback:")
+        import traceback
+        traceback.print_exc()
+        print("Please ensure that the model is available and that transformers is correctly installed.")
+        exit(1)
 
-def generate_response(prompt: str, model):
-    output = model(prompt, max_tokens=100, stop=["Human:", "\n"], echo=True)
-    return output['choices'][0]['text'].strip()
+def generate_response(prompt: str, model, tokenizer, scripting_env):
+    try:
+        full_prompt = f"""Instruction: Provide a concise and accurate answer to the following question about using the command line in a {scripting_env} environment.
+
+Question: {prompt}
+
+Answer: """
+        inputs = tokenizer(full_prompt, return_tensors="pt", truncation=True, max_length=512)
+        outputs = model.generate(**inputs, max_new_tokens=150, num_return_sequences=1, temperature=0.7, top_p=0.95, do_sample=True)
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        # Extract only the answer part
+        answer = response.split("Answer:")[-1].strip()
+        return answer
+    except Exception as e:
+        print(f"Error generating response: {e}")
+        return "Sorry, I couldn't generate a response. Please try again."
 
 def create_connection(db_file):
     conn = sqlite3.connect(db_file)
@@ -92,7 +112,7 @@ def is_question(input_text):
     return False
 
 def main():
-    model = load_llm_model(MODEL_PATH)
+    model, tokenizer = load_llm_model(MODEL_NAME)
     
     db_file = "cli_commands.db"
     conn = create_connection(db_file)
@@ -109,7 +129,7 @@ def main():
         
         if is_question(user_input):
             # Generate response using LLM
-            response = generate_response(user_input, model)
+            response = generate_response(user_input, model, tokenizer, scripting_env)
             print(f"LLM Response: {response}")
         else:
             # Check if command exists in database
@@ -125,8 +145,8 @@ def main():
                 # Store the information in the database
                 insert_command(conn, (user_input, command_info, "", scripting_env))
                 print("Command information stored in the database.")
-
+    
     conn.close()
-
+    
 if __name__ == "__main__":
     main()

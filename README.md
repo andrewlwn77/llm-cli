@@ -18,12 +18,23 @@ This CLI application uses the Phi-3.1-mini-4k-instruct-IQ2_M model to answer que
    source venv/bin/activate
    ```
 
-3. Install dependencies:
+3. Upgrade pip and install wheel:
+   ```sh
+   pip install --upgrade pip
+   pip install wheel
+   ```
+
+4. Install dependencies:
    ```sh
    pip install -r requirements.txt
    ```
 
-4. Run the application:
+   If you encounter issues, try installing llama-cpp-python separately:
+   ```sh
+   pip install llama-cpp-python==0.2.86+cpu --no-cache-dir
+   ```
+
+5. Run the application:
    ```sh
    python main.py
    ```
@@ -49,6 +60,17 @@ This CLI application uses the Phi-3.1-mini-4k-instruct-IQ2_M model to answer que
 - Automatic detection of the current scripting environment
 - Command information gathering using the 'man' command
 - Question detection for triggering LLM responses
+
+## Troubleshooting
+
+If you encounter issues with installing or running the application, please ensure that:
+
+1. You have Python 3.7 or higher installed.
+2. You are using a virtual environment to avoid conflicts with system-wide packages.
+3. Your pip and wheel are up to date.
+4. If you're still having issues with llama-cpp-python, try installing it separately using the CPU-only version as mentioned in the installation steps.
+
+If you still face issues, please report them in the Issues section of this repository.
 
 ## Development
 
