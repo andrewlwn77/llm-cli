@@ -38,9 +38,6 @@ def load_llm_model(model_name):
         print(f"Error loading the model: {str(e)}")
         print(f"Error type: {type(e).__name__}")
         print(f"Error details: {str(e)}")
-        print("Traceback:")
-        import traceback
-        traceback.print_exc()
         print("Please ensure that the model is available and that transformers is correctly installed.")
         return None, None
 
@@ -128,19 +125,75 @@ class Completer:
     def complete(self, text, state):
         if state == 0:
             line = readline.get_line_buffer()
-            parts = line.split()
-            
-            if not parts or line[-1] == ' ':
-                # Complete commands
-                self.matches = glob.glob(text + '*')
-            elif len(parts) == 1 and parts[0] == 'cd':
-                # Complete directories for cd command
-                self.matches = [d for d in glob.glob(text + '*') if os.path.isdir(d)]
-            else:
-                # Complete filenames
-                self.matches = glob.glob(text + '*')
+            self.matches = self.get_bash_completions(line, text)
         
         return self.matches[state] if state < len(self.matches) else None
+
+    def get_bash_completions(self, line, text):
+        try:
+            # Escape single quotes in the line
+            escaped_line = line.replace("'", "'\\''")
+            
+            script = f"""
+                # Source bash completion scripts
+                if [[ -f /usr/share/bash-completion/bash_completion ]]; then
+                    . /usr/share/bash-completion/bash_completion
+                elif [[ -f /etc/bash_completion ]]; then
+                    . /etc/bash_completion
+                fi
+
+                # Set up completion environment
+                COMP_LINE='{escaped_line}'
+                COMP_WORDS=({escaped_line})
+                COMP_CWORD=${{#COMP_WORDS[@]}}
+                COMP_CWORD=$(($COMP_CWORD - 1))
+                COMP_POINT=${{#COMP_LINE}}
+
+                echo "COMP_LINE: $COMP_LINE"
+                echo "COMP_WORDS: ${{COMP_WORDS[@]}}"
+                echo "COMP_CWORD: $COMP_CWORD"
+                echo "COMP_POINT: $COMP_POINT"
+
+                # Attempt to get the completion function
+                completion_func=$(complete -p ${{COMP_WORDS[0]}} 2>/dev/null | sed -n "s/.*-F \\([^ ]*\\) .*/\\1/p")
+                echo "completion_func: $completion_func"
+
+                if [[ -n "$completion_func" ]]; then
+                    # If a completion function was found, execute it
+                    $completion_func
+                else
+                    # If no completion function was found, try to load it
+                    if [[ -f /usr/share/bash-completion/completions/${{COMP_WORDS[0]}} ]]; then
+                        . /usr/share/bash-completion/completions/${{COMP_WORDS[0]}}
+                        # Try to get the completion function again
+                        completion_func=$(complete -p ${{COMP_WORDS[0]}} 2>/dev/null | sed -n "s/.*-F \\([^ ]*\\) .*/\\1/p")
+                        echo "loaded completion_func: $completion_func"
+                        if [[ -n "$completion_func" ]]; then
+                            $completion_func
+                        fi
+                    else
+                        # Default to filename completion
+                        compgen -f -- "${{COMP_WORDS[COMP_CWORD]}}"
+                    fi
+                fi
+
+                # Print completions
+                printf "Completions:\\n"
+                printf "%s\\n" "${{COMPREPLY[@]}}"
+            """
+            
+            result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
+            print(f"Bash script stdout:\n{result.stdout}")
+            print(f"Bash script stderr:\n{result.stderr}")
+            
+            completions = result.stdout.splitlines()
+            # Filter out debug lines and empty lines
+            completions = [line for line in completions if line and not line.startswith(('COMP_', 'completion_func:', 'Completions:', 'loaded completion_func:'))]
+            
+            return [c for c in completions if c.startswith(text)]
+        except subprocess.CalledProcessError as e:
+            print(f"Error in bash completion: {e}")
+            return []
 
 def main():
     model, tokenizer = load_llm_model(MODEL_NAME)
