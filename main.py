@@ -149,48 +149,46 @@ class Completer:
                 COMP_CWORD=$(($COMP_CWORD - 1))
                 COMP_POINT=${{#COMP_LINE}}
 
-                echo "COMP_LINE: $COMP_LINE"
-                echo "COMP_WORDS: ${{COMP_WORDS[@]}}"
-                echo "COMP_CWORD: $COMP_CWORD"
-                echo "COMP_POINT: $COMP_POINT"
-
-                # Attempt to get the completion function
-                completion_func=$(complete -p ${{COMP_WORDS[0]}} 2>/dev/null | sed -n "s/.*-F \\([^ ]*\\) .*/\\1/p")
-                echo "completion_func: $completion_func"
-
-                if [[ -n "$completion_func" ]]; then
-                    # If a completion function was found, execute it
-                    $completion_func
+                if [[ $COMP_CWORD -eq 0 ]]; then
+                    # Complete command names
+                    compgen -c -- "${{COMP_WORDS[0]}}"
                 else
-                    # If no completion function was found, try to load it
-                    if [[ -f /usr/share/bash-completion/completions/${{COMP_WORDS[0]}} ]]; then
-                        . /usr/share/bash-completion/completions/${{COMP_WORDS[0]}}
-                        # Try to get the completion function again
-                        completion_func=$(complete -p ${{COMP_WORDS[0]}} 2>/dev/null | sed -n "s/.*-F \\([^ ]*\\) .*/\\1/p")
-                        echo "loaded completion_func: $completion_func"
-                        if [[ -n "$completion_func" ]]; then
-                            $completion_func
-                        fi
+                    # Attempt to get the completion function
+                    completion_func=$(complete -p ${{COMP_WORDS[0]}} 2>/dev/null | sed -n "s/.*-F \\([^ ]*\\) .*/\\1/p")
+
+                    if [[ -n "$completion_func" ]]; then
+                        # If a completion function was found, execute it
+                        $completion_func
                     else
-                        # Default to filename completion
-                        compgen -f -- "${{COMP_WORDS[COMP_CWORD]}}"
+                        # If no completion function was found, try to load it
+                        if [[ -f /usr/share/bash-completion/completions/${{COMP_WORDS[0]}} ]]; then
+                            . /usr/share/bash-completion/completions/${{COMP_WORDS[0]}}
+                            # Try to get the completion function again
+                            completion_func=$(complete -p ${{COMP_WORDS[0]}} 2>/dev/null | sed -n "s/.*-F \\([^ ]*\\) .*/\\1/p")
+                            if [[ -n "$completion_func" ]]; then
+                                $completion_func
+                            fi
+                        else
+                            # Default to filename completion
+                            compgen -f -- "${{COMP_WORDS[COMP_CWORD]}}"
+                        fi
                     fi
                 fi
 
                 # Print completions
-                printf "Completions:\\n"
                 printf "%s\\n" "${{COMPREPLY[@]}}"
             """
             
             result = subprocess.run(['bash', '-c', script], capture_output=True, text=True)
-            print(f"Bash script stdout:\n{result.stdout}")
-            print(f"Bash script stderr:\n{result.stderr}")
+            completions = result.stdout.strip().split('\n')
+            filtered_completions = [c for c in completions if c and c.startswith(text)]
             
-            completions = result.stdout.splitlines()
-            # Filter out debug lines and empty lines
-            completions = [line for line in completions if line and not line.startswith(('COMP_', 'completion_func:', 'Completions:', 'loaded completion_func:'))]
+            # If no completions, print the output for debugging
+            if not filtered_completions:
+                print(f"Debug - Bash output: {result.stdout}")
+                print(f"Debug - Bash error: {result.stderr}")
             
-            return [c for c in completions if c.startswith(text)]
+            return filtered_completions
         except subprocess.CalledProcessError as e:
             print(f"Error in bash completion: {e}")
             return []
