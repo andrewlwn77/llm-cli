@@ -1,0 +1,4 @@
+requests
+tqdm
+llama-cpp-python
+sqlite3
